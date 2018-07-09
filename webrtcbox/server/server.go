@@ -75,11 +75,21 @@ func mainprocess() {
 	time.Sleep(5 * time.Second)
 	fmt.Printf("====Waiting all ok===\n", )
 	<-ChAllOk
+	var connecting_count = 0
 	for !endchat{
 		msg := "i am server\n"
+		state := dc.ReadyState().String()
 		fmt.Printf("server send data : %s\n", msg)
-		fmt.Printf("DataChannel state : %s\n", dc.ReadyState().String())
-		dc.Send([]byte(msg))
+		fmt.Printf("DataChannel state : %s\n", state)
+		if state == "Open"{
+			dc.Send([]byte(msg))
+			connecting_count = 0
+		}else if state == "Connecting"{
+			connecting_count ++
+		}
+		if state == "Closed" || connecting_count >= 2 {
+			endchat = true
+		}
 		time.Sleep(5 * time.Second)
 	}
 }
@@ -107,6 +117,8 @@ func createpc() *webrtc.PeerConnection {
 		fmt.Println("Failed to create PeerConnection.")
 		return pc
 	}
+
+	clearBoxSdp()
 	return pc
 }
 
@@ -137,8 +149,18 @@ func generateOffer(pc *webrtc.PeerConnection) {
 	pc.SetLocalDescription(offer)
 }
 
+func clearBoxSdp() {
+	fmt.Println(" ---- clear server sdp ---- ")
+	updateBoxSdp("")
+}
+
 func registerBoxSdp(msg string) {
-	fmt.Println(" ---- register sdp to host ---- ")
+	fmt.Println(" ---- register sdp to server ---- ")
+	updateBoxSdp(msg)
+}
+
+func updateBoxSdp(msg string) {
+	fmt.Println(" ---- updateBoxSdp sdp to host ---- ")
 	url := "http://iamtest.yqtc.co/ubbey/turn/box_sdp"
 	body := SdpReq{}
 
@@ -154,6 +176,8 @@ func registerBoxSdp(msg string) {
 
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	cli.Transport = tr
+	jb, _  := json.MarshalIndent(body, "==", "    ")
+	fmt.Printf("updateBoxSdp Input:%s\n", jb)
 
 	r, err := cli.Do(req)
 	if err != nil {
@@ -184,7 +208,8 @@ func getRemoteAppSdp() (sdp string, boxsid string, err error) {
 
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	cli.Transport = tr
-
+	jb, _  := json.MarshalIndent(body, "==", "    ")
+	fmt.Printf("getRemoteAppSdp Input:%s\n", jb)
 	r, err := cli.Do(req)
 	if err != nil {
 		fmt.Printf("http err :%s\n", err.Error())
