@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"flag"
 )
 
 type SdpReq struct {
@@ -25,7 +26,7 @@ type SdpRsp struct {
 	App_sdp string `json:"app_sdp"`
 }
 
-const BOXID = "testbox123"
+var BOXID = "testbox123"
 func mainprocess() {
 	var (
 		ChOnGenerateOffer = make(chan int, 1)
@@ -83,6 +84,9 @@ func mainprocess() {
 	}
 }
 func main(){
+	flag.StringVar(&BOXID, "boxid", BOXID, "boxid")
+	flag.Parse()
+
 	for{
 		fmt.Println("!!!Start a new session!!!!")
 		mainprocess()

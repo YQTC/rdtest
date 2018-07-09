@@ -18,7 +18,7 @@ var cast = [
   "Sybil", "Trent", "Wendy"
 ]
 
-var BOXID = "testbox123"
+var BOXID = location.href.split('#')[1] || "testbox123" 
 
 window.PeerConnection = window.RTCPeerConnection ||
                         window.mozRTCPeerConnection || window.webkitRTCPeerConnection;
