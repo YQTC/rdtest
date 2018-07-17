@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"ubox.golib/p2p/protocol"
 	"io/ioutil"
-	"flag"
 )
 
 var (
@@ -17,7 +16,7 @@ var (
 	ChRemoteAppSdp  = make(chan string, 10)
 )
 
-var BOXID = "123"
+var BOXID = "12345678"
 
 type webRtc struct {
 	chOnGenerateOffer chan int
@@ -30,8 +29,6 @@ type webRtc struct {
 }
 
 func NewWebRtc() *webRtc {
-	flag.StringVar(&BOXID, "boxid", BOXID, "boxid")
-	flag.Parse()
 
 	ins := &webRtc{}
 	ins.init()

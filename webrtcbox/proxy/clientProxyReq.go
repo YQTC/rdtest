@@ -60,6 +60,7 @@ func (pdc *dcManager) parseData() {
 	fmt.Printf("get req %s\n",bdata)
 
 	t := reflect.TypeOf(bdata)
+	fmt.Printf("reflect.TypeOf(bdata):%+v",t)
 
 	switch t.Name() {
 	case "WebRtcReq":
