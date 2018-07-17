@@ -55,15 +55,25 @@ func (pdc *dcManager) parseData() {
 	}
 	fmt.Printf("read buffer data success :%s\n",bdata)
 	//p := protocol.Protocol{}
-	p := protocol.WebRtcReq{}
-	json.Unmarshal(bdata , &p)
 
-	fmt.Printf("get req %+v\n",p)
 
-	t := reflect.TypeOf(p)
-	if t.Name() == "WebRtcReq" {
+	fmt.Printf("get req %s\n",bdata)
+
+	t := reflect.TypeOf(bdata)
+
+	switch t.Name() {
+	case "WebRtcReq":
+		fmt.Printf("handle WebRtcReq ...\n")
+		p := protocol.WebRtcReq{}
+		json.Unmarshal(bdata , &p)
 		pdc.ChReq <- p
+	case "WebRtcRsp":
+		fmt.Printf("handle WebRtcRsp ...\n")
+		p := protocol.WebRtcRsp{}
+		json.Unmarshal(bdata , &p)
+		pdc.ChRsp <- p
 	}
+
 	//if p.Reqname == "WebRtcRsp" {
 	//	rp := protocol.WebRtcRsp{}
 	//	json.Unmarshal(p.Data , &rp)

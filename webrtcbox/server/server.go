@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 	"ubox.golib/p2p/protocol"
-	"webRtc/proxy"
+	"rdtest/webrtcbox/proxy"
 )
 
 const BOXID = "123"

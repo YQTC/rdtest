@@ -98,7 +98,7 @@ func (wr *webRtc) mainLoop(){
 		fmt.Printf("mainLoop get req %+v\n",req)
 
 		retReq , _ := json.Marshal(req)
-		wr.dc.Send(retReq)
+		wr.dc.Send([]byte(string(retReq) + "\n"))
 
 		reader := bytes.NewReader([]byte(req.Body))
 		url := "http://192.168.0.36:37867" + req.Url
@@ -140,7 +140,7 @@ func (wr *webRtc) mainLoop(){
 		rsdata , _ := json.Marshal(rsp)
 
 		fmt.Printf("data channel status :%s\n",wr.dc.ReadyState().String())
-		wr.dc.Send([]byte(rsdata))
+		wr.dc.Send([]byte(string(rsdata) + "\n"))
 
 		fmt.Printf("mainLoop send rsp :%s\n",rsdata)
 	}
