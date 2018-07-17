@@ -1,41 +1,50 @@
 package proxy
 
 import (
-	"github.com/keroserene/go-webrtc"
-	"fmt"
-	"strings"
-	"encoding/json"
 	"bytes"
-	"net/http"
-	"ubox.golib/p2p/protocol"
+	"encoding/json"
+	"fmt"
+	"github.com/keroserene/go-webrtc"
 	"io/ioutil"
+	"net/http"
+	"strings"
+	"ubox.golib/p2p/protocol"
 )
 
 var (
-	sdpManager = make(map[string]string)
-	ChRemoteAppSdp  = make(chan string, 10)
+	SdpManager = make(map[string]string)
 )
-
-const BOXID = "123"
 
 type webRtc struct {
 	chOnGenerateOffer chan int
 	chSignalRegister  chan string
 	chStartGetAppSdp  chan string
-	pc 				  *webrtc.PeerConnection
+	pc                *webrtc.PeerConnection
 	chStartSetBoxSdp  chan string
-	dc 			      *webrtc.DataChannel
-	chAllOk 		  chan int
+	chAllOk           chan int
+	id                string
+	dcManager         *dcManager
+
+	proxyHost string
+	sendSdp   func(sdp string)
+	recvSdp   func(session string) (app_sdp string)
 }
 
-func NewWebRtc() *webRtc {
-	ins := &webRtc{}
-	ins.init()
+func NewWebRtc(host string, sendSdp func(sdp string), recvSdp func(session string) (app_sdp string)) *webRtc {
+	ins := &webRtc{
+		chOnGenerateOffer: make(chan int, 1),
+		chSignalRegister:  make(chan string, 1),
+		chStartGetAppSdp:  make(chan string, 1),
+		chStartSetBoxSdp:  make(chan string, 1),
+		chAllOk:           make(chan int, 1),
+		proxyHost:         host,
+		sendSdp:           sendSdp,
+		recvSdp:           recvSdp,
+	}
 	return ins
 }
 
 func (wr *webRtc) StartUp() {
-
 
 	// Step 1. create pc
 	wr.createConn()
@@ -45,76 +54,85 @@ func (wr *webRtc) StartUp() {
 
 	// Step 3. createoffer
 	go func() {
-		<- wr.chOnGenerateOffer //wait
+		<-wr.chOnGenerateOffer //wait
 
 		wr.generateOffer()
 
 		localSdp := wr.pc.LocalDescription().Serialize()
 		session := getSdpSession(localSdp)
-		sdpManager[session] = localSdp
+		SdpManager[session] = localSdp
 
-		fmt.Printf("session :%s sdp :%s\n",session , localSdp)
+		fmt.Printf("session :%s sdp :%s\n", session, localSdp)
 	}()
 
 	// Step 4. registerBoxSdp
 	go func() {
-		sdp := <- wr.chSignalRegister //wait
-		wr.registerBoxSdp(sdp)
+		sdp := <-wr.chSignalRegister //wait
+		wr.sendSdp(sdp)
+
 		wr.chStartGetAppSdp <- sdp
 	}()
 
 	// Step 5. getRemoteAppSdp
 	go func() {
-		<- wr.chStartGetAppSdp //wait
-		app_sdp := <- ChRemoteAppSdp
-		//fmt.Printf("remote sdp %s\n",app_sdp)
+		box_sdp := <-wr.chStartGetAppSdp //wait
+		session := getSdpSession(box_sdp)
+
+		wr.id = session
+
+		app_sdp := wr.recvSdp(session)
+
+		fmt.Printf("box get remote app sdp :%s\n", app_sdp)
 		wr.chStartSetBoxSdp <- app_sdp
 	}()
 
 	// Step 6. setBoxLocalRemoteSdp
 	go func() {
-		app_sdp := <- wr.chStartSetBoxSdp //wait
+		app_sdp := <-wr.chStartSetBoxSdp //wait
 		wr.setBoxLocalRemoteSdp(app_sdp)
-		wr.chAllOk <-1
+		wr.chAllOk <- 1
 	}()
 
 	// Step 7. blocked & loop & print status info
 
 	wr.prepareDataChannel()
 
-	fmt.Printf("====Waiting all ok===\n", )
-	<- wr.chAllOk
+	fmt.Printf("====Waiting all ok===\n")
+	<-wr.chAllOk
 
-
-	fmt.Printf("====main loop===\n", )
+	fmt.Printf("====main loop===\n")
 	wr.mainLoop()
 
 }
 
-func (wr *webRtc) mainLoop(){
+func (wr *webRtc) mainLoop() {
 	for {
 
-		req := <- GetCliManager().ChReq
-		fmt.Printf("mainLoop get req %+v\n",req)
-
-		retReq , _ := json.Marshal(req)
-		wr.dc.Send([]byte(string(retReq) + "\n"))
+		req := <-wr.dcManager.ChReq
+		fmt.Printf("mainLoop get req %+v\n", req)
+		wr.dcManager.SendWebRtcReq(req)
 
 		reader := bytes.NewReader([]byte(req.Body))
-		url := "http://192.168.0.36:37867" + req.Url
-		request , _ := http.NewRequest(req.Method , url , reader)
+		url := wr.proxyHost + req.Url
+		method := strings.ToUpper(req.Method)
+		fmt.Printf("http url :%s method :%s\n", req.Url, method)
+		request, err := http.NewRequest(method, url, reader)
+		if err != nil {
+			fmt.Printf("new http request err :%s\n", err.Error())
+			continue
+		}
 
 		reqHeader := make(map[string][]string)
-		json.Unmarshal([]byte(req.Header) , &reqHeader)
-		for k , v := range reqHeader {
+		json.Unmarshal([]byte(req.Header), &reqHeader)
+		for k, v := range reqHeader {
 			request.Header[k] = v
 		}
 
-		fmt.Printf("do http req , url :%s header :%+v body :%s\n",url,reqHeader,req.Body)
+		fmt.Printf("do http req , url :%s header :%+v body :%s\n", url, reqHeader, req.Body)
 		client := http.Client{}
-		response , err := client.Do(request)
+		response, err := client.Do(request)
 		if err != nil {
-			fmt.Printf("http req err :%s\n",err.Error())
+			fmt.Printf("http req err :%s\n", err.Error())
 			return
 		}
 
@@ -122,41 +140,24 @@ func (wr *webRtc) mainLoop(){
 
 		rspHeader := make(map[string][]string)
 
-
 		rsp.Code = response.StatusCode
-		for k , v := range response.Header {
+		for k, v := range response.Header {
 			rspHeader[k] = v
 		}
-		rspHeaderStr , _ := json.Marshal(rspHeader)
+		rspHeaderStr, _ := json.Marshal(rspHeader)
 		rsp.Header = string(rspHeaderStr)
 
-		body , err := ioutil.ReadAll(response.Body)
+		body, err := ioutil.ReadAll(response.Body)
 		if err != nil {
-			fmt.Printf("read http rsp err :%s\n",err.Error())
+			fmt.Printf("read http rsp err :%s\n", err.Error())
 			return
 		}
-
 		rsp.Body = string(body)
-		rsdata , _ := json.Marshal(rsp)
 
-		fmt.Printf("data channel status :%s\n",wr.dc.ReadyState().String())
-		wr.dc.Send([]byte(string(rsdata) + "\n"))
+		wr.dcManager.SendWebRtcReq(rsp)
 
-		fmt.Printf("mainLoop send rsp :%s\n",rsdata)
+		fmt.Printf("session :%s mainLoop send rsp :%+v\n", wr.id, rsp)
 	}
-}
-
-
-func (wr *webRtc) init() {
-	wr.chOnGenerateOffer = make(chan int, 1)
-	wr.chSignalRegister  = make(chan string, 1)
-	wr.chStartGetAppSdp  = make(chan string, 1)
-	wr.chStartSetBoxSdp  = make(chan string, 1)
-	wr.chAllOk = make(chan int, 1)
-
-	protocol.GetProtManagerIns().SetFuncHandler(protocol.ReqRegisterSdp{} , handleRegisterSdpReq)
-	protocol.GetProtManagerIns().SetFuncHandler(protocol.PushAppSdp{} , handleRemoteAppSdp)
-
 }
 
 func (wr *webRtc) createConn() {
@@ -178,7 +179,7 @@ func (wr *webRtc) createConn() {
 	return
 }
 
-func (wr *webRtc) registerCallback(){
+func (wr *webRtc) registerCallback() {
 	// OnNegotiationNeeded is triggered when something important has occurred in
 	// the state of PeerConnection (such as creating a new data channel), in which
 	// case a new SDP offer must be prepared and sent to the remote peer.
@@ -196,8 +197,6 @@ func (wr *webRtc) registerCallback(){
 
 	wr.pc.OnDataChannel = func(channel *webrtc.DataChannel) {
 		fmt.Println("Datachannel established by remote... ", channel.Label())
-		wr.dc = channel
-		wr.datachannlePrepare()
 	}
 }
 
@@ -210,34 +209,7 @@ func (wr *webRtc) prepareDataChannel() {
 		return
 	}
 
-	datachannl.OnOpen = func() {
-		fmt.Println("Data Channel Opened!")
-		//startChat()
-	}
-	datachannl.OnClose = func() {
-		fmt.Println("Data Channel closed.")
-
-	}
-	datachannl.OnMessage = func(msg []byte) {
-		fmt.Printf("recv msg : %s\n", msg)
-		GetCliManager().PutData(msg)
-	}
-
-	wr.dc = datachannl
-}
-
-func (wr *webRtc) datachannlePrepare() {
-	wr.dc.OnOpen = func() {
-		fmt.Println("Data Channel Opened!")
-		//startChat()
-	}
-	wr.dc.OnClose = func() {
-		fmt.Println("Data Channel closed.")
-	}
-	wr.dc.OnMessage = func(msg []byte) {
-		fmt.Printf("recv msg : %s\n", msg)
-	}
-
+	wr.dcManager = NewDcManager(datachannl)
 }
 
 func (wr *webRtc) generateOffer() {
@@ -275,8 +247,6 @@ func (wr *webRtc) setBoxLocalRemoteSdp(msg string) {
 		fmt.Println("SDP " + sdp.Type + " successfully received.")
 	}
 
-
-
 	// Allow individual ICE candidate messages, but this won't be necessary if
 	// the remote peer also doesn't use trickle ICE.
 	if nil != parsed["candidate"] {
@@ -291,83 +261,14 @@ func (wr *webRtc) setBoxLocalRemoteSdp(msg string) {
 	fmt.Println("\nNormal exit setBoxLocalRemoteSdp")
 }
 
-func (wr *webRtc) registerBoxSdp(msg string) {
-	fmt.Println(" ---- register sdp to host ---- ")
-
-	req := protocol.RegisterSdp{}
-	req.BoxId = BOXID
-	req.Sdp = msg
-
-	err := protocol.GetTcpConn().HandleWrite(req)
-	if err != nil {
-		fmt.Printf("registerBoxSdp register failed , err :%s\n",err.Error())
-	} else {
-		fmt.Printf("registerBoxSdp register success ...\n")
-	}
-}
-
 func getSdpSession(sdp string) string {
 	data := make(map[string]string)
 
-	json.Unmarshal([]byte(sdp) , &data)
+	json.Unmarshal([]byte(sdp), &data)
 
 	s := data["sdp"]
 
-	sdps := strings.Split(s," ")
+	sdps := strings.Split(s, " ")
 
 	return sdps[1]
 }
-
-
-// webRtc Handler...
-
-func handleRegisterSdpReq(context protocol.Context) {
-	fmt.Printf("handleRegisterSdpReq get data %+v\n",context.Data)
-	req := protocol.ReqRegisterSdp{}
-	json.Unmarshal(context.Data , &req)
-
-	go NewWebRtc().StartUp()
-}
-
-func handleRemoteAppSdp(context protocol.Context)  {
-	fmt.Println(" ---- get sdp connect from host ---- ")
-	fmt.Printf("handleRemoteAppSdp get data %s\n",context.Data)
-
-	//handle app sdp push req
-	req := protocol.PushAppSdp{}
-	json.Unmarshal(context.Data , &req)
-
-	//get session from sdp
-	sdpPack := map[string]string{}
-
-	json.Unmarshal([]byte(req.AppSdp), &sdpPack)
-
-	sesssion , ok := sdpPack["myrandsessionid"]
-	boxSdp := sdpManager[sesssion]
-
-	//compare session whether macth
-	rsp := protocol.PushRes{
-		ErrNo: 0,
-		ErrMsg: "success",
-	}
-	rsp.RequestId = req.RequestId
-	fmt.Printf("app box sdp match , app :%s box%s\n",req.AppSdp,boxSdp)
-	if ok && strings.Index(boxSdp , sesssion) >= 0 {
-		ChRemoteAppSdp <- req.AppSdp
-		fmt.Printf("app sdp match , start to set remote sdp...\n")
-	} else {
-		fmt.Printf("local sdp :%s remote sdp :%s\n",boxSdp , req.AppSdp)
-		rsp.ErrNo = 1001
-		rsp.ErrMsg = "app sdp not match box sdp..."
-		fmt.Printf("app sdp not match box sdp...\n")
-	}
-
-	//send push sdp resp to server
-	err := context.Conn.HandleWrite(rsp)
-	if err != nil {
-		fmt.Printf("handleRemoteAppSdp send rsp err :%s\n",err.Error())
-	} else {
-		fmt.Printf("handleRemoteAppSdp send rsp success :%+v\n",rsp)
-	}
-}
-

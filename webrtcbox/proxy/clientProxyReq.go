@@ -1,92 +1,79 @@
 package proxy
 
 import (
-	"ubox.golib/p2p/protocol"
 	"bytes"
-	"fmt"
 	"encoding/base64"
 	"encoding/json"
-
-	"reflect"
+	"fmt"
+	"github.com/keroserene/go-webrtc"
+	"ubox.golib/p2p/protocol"
 )
 
 type dcManager struct {
-	Buffer 	*bytes.Buffer
-	ChRsp   chan protocol.WebRtcRsp
-	ChReq 	chan protocol.WebRtcReq
+	Buffer      *bytes.Buffer
+	ChReq       chan protocol.WebRtcReq
+	dataChannel *webrtc.DataChannel
 }
 
-var instance *dcManager
+func NewDcManager(dc *webrtc.DataChannel) (pdc *dcManager) {
 
-func GetCliManager() *dcManager {
-	if instance == nil {
-		instance = new(dcManager)
-	//	buf := make([]byte,1024 * 1024)
-		instance.Buffer = new(bytes.Buffer)
-		instance.ChRsp = make(chan protocol.WebRtcRsp , 10)
-		instance.ChReq = make(chan protocol.WebRtcReq , 10)
+	instance := &dcManager{dataChannel: dc}
+
+	instance.Buffer = new(bytes.Buffer)
+	//instance.ChRsp = make(chan protocol.WebRtcRsp , 10)
+	instance.ChReq = make(chan protocol.WebRtcReq, 10)
+
+	dc.OnOpen = func() {
+		fmt.Println("Data Channel Opened!")
+		//startChat()
+	}
+	dc.OnClose = func() {
+		fmt.Println("Data Channel closed.")
+
+	}
+	dc.OnMessage = func(msg []byte) {
+		fmt.Printf("recv msg : %s\n", msg)
+		instance.recvData(msg)
 	}
 	return instance
 }
 
-func (pdc *dcManager) PutData(buf []byte) {
-	n , err := pdc.Buffer.Write(buf)
+func (pdc *dcManager) SendWebRtcReq(i interface{}) {
+	data, _ := json.Marshal(i)
 
-	if err != nil {
-		fmt.Printf("write buffer error %s\n",err.Error())
-	}
-	fmt.Printf("write buffer data success n:%d data:%s\n",n,buf[:n])
-	pdc.parseData()
+	fmt.Printf("data channel status :%s\n", pdc.dataChannel.ReadyState().String())
+	pdc.dataChannel.Send([]byte(string(data) + "\n"))
 }
 
-func (pdc *dcManager) parseData() {
-	data , err := pdc.Buffer.ReadString('\n')
+func (pdc *dcManager) recvData(buf []byte) {
+	n, err := pdc.Buffer.Write(buf)
+
+	if err != nil {
+		fmt.Printf("write buffer error %s\n", err.Error())
+	}
+	fmt.Printf("write buffer data success n:%d data:%s\n", n, buf[:n])
+
+	data, err := pdc.Buffer.ReadString('\n')
 	if err != nil {
 		pdc.Buffer.Write([]byte(data))
-		fmt.Printf("read buffer err :%s\n",err.Error())
+		fmt.Printf("read buffer err :%s\n", err.Error())
 		return
 	}
 
-
-	//protocol.GetProtManagerIns().HandleRequest(data , nil)
-	bdata , err := base64.StdEncoding.DecodeString(data)
+	bdata, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
-		fmt.Printf("decode string err :%s\n",err.Error())
+		fmt.Printf("decode string err :%s\n", err.Error())
 	}
-	fmt.Printf("read buffer data success :%s\n",bdata)
-	//p := protocol.Protocol{}
+	fmt.Printf("read buffer data success :%s\n", bdata)
 
+	p := protocol.WebRtcReq{}
+	err = json.Unmarshal(bdata, &p)
 
-	fmt.Printf("get req %s\n",bdata)
-
-	t := reflect.TypeOf(bdata)
-
-	switch t.Name() {
-	case "WebRtcReq":
-		fmt.Printf("handle WebRtcReq ...\n")
-		p := protocol.WebRtcReq{}
-		json.Unmarshal(bdata , &p)
-		pdc.ChReq <- p
-	case "WebRtcRsp":
-		fmt.Printf("handle WebRtcRsp ...\n")
-		p := protocol.WebRtcRsp{}
-		json.Unmarshal(bdata , &p)
-		pdc.ChRsp <- p
+	if err != nil {
+		fmt.Printf("unmarshal req err :%s\n", err.Error())
+		return
 	}
 
-	//if p.Reqname == "WebRtcRsp" {
-	//	rp := protocol.WebRtcRsp{}
-	//	json.Unmarshal(p.Data , &rp)
-	//	pdc.ChRsp <- rp
-	//}
-	//if p.Reqname == "WebRtcReq" {
-	//	rp := protocol.WebRtcReq{}
-	//	json.Unmarshal(p.Data , &rp)
-	//	pdc.ChReq <- rp
-	//}
+	pdc.ChReq <- p
 
 }
-
-
-
-
