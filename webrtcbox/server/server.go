@@ -7,12 +7,8 @@ import (
 	"flag"
 )
 
-var BOXID = "123"
-
 
 func main(){
-	flag.StringVar(&BOXID, "boxid", BOXID, "boxid")
-	flag.Parse()
 
 	go protocol.TcpConnect("iamtest.yqtc.co:7005")
 
