@@ -4,7 +4,6 @@ import (
 	"time"
 	"ubox.golib/p2p/protocol"
 	"../proxy"
-	"flag"
 )
 
 
