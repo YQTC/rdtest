@@ -13,7 +13,7 @@ import (
 
 	"github.com/labstack/echo"
 	"ubox.golib/p2p/protocol"
-	"webRtc/proxy"
+	"../proxy"
 	"encoding/base64"
 )
 
