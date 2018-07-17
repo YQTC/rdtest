@@ -3,9 +3,10 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
+
 	"github.com/keroserene/go-webrtc"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"strings"
 	"ubox.golib/p2p/protocol"
@@ -62,7 +63,7 @@ func (wr *webRtc) StartUp() {
 		session := getSdpSession(localSdp)
 		SdpManager[session] = localSdp
 
-		fmt.Printf("session :%s sdp :%s\n", session, localSdp)
+		log.Printf("session :%s sdp :%s\n", session, localSdp)
 	}()
 
 	// Step 4. registerBoxSdp
@@ -82,7 +83,7 @@ func (wr *webRtc) StartUp() {
 
 		app_sdp := wr.recvSdp(session)
 
-		fmt.Printf("box get remote app sdp :%s\n", app_sdp)
+		log.Printf("box get remote app sdp :%s\n", app_sdp)
 		wr.chStartSetBoxSdp <- app_sdp
 	}()
 
@@ -97,28 +98,30 @@ func (wr *webRtc) StartUp() {
 
 	wr.prepareDataChannel()
 
-	fmt.Printf("====Waiting all ok===\n")
+	log.Printf("====Waiting all ok===\n")
 	<-wr.chAllOk
 
-	fmt.Printf("====main loop===\n")
+	log.Printf("====main loop===\n")
 	wr.mainLoop()
 
 }
 
 func (wr *webRtc) mainLoop() {
 	for {
+		req, ok := <-wr.dcManager.ChReq
+		if !ok {
+			break
+		}
 
-		req := <-wr.dcManager.ChReq
-		fmt.Printf("mainLoop get req %+v\n", req)
-		wr.dcManager.SendWebRtcReq(req)
+		log.Printf("mainLoop get req %+v\n", req)
 
 		reader := bytes.NewReader([]byte(req.Body))
 		url := wr.proxyHost + req.Url
 		method := strings.ToUpper(req.Method)
-		fmt.Printf("http url :%s method :%s\n", req.Url, method)
+		log.Printf("http url :%s method :%s\n", req.Url, method)
 		request, err := http.NewRequest(method, url, reader)
 		if err != nil {
-			fmt.Printf("new http request err :%s\n", err.Error())
+			log.Printf("new http request err :%s\n", err.Error())
 			continue
 		}
 
@@ -128,17 +131,19 @@ func (wr *webRtc) mainLoop() {
 			request.Header[k] = v
 		}
 
-		fmt.Printf("do http req , url :%s header :%+v body :%s\n", url, reqHeader, req.Body)
+		log.Printf("do http req , url :%s header :%+v body :%s\n", url, reqHeader, req.Body)
 		client := http.Client{}
 		response, err := client.Do(request)
 		if err != nil {
-			fmt.Printf("http req err :%s\n", err.Error())
-			return
+			log.Printf("http req err :%s\n", err.Error())
+			continue
 		}
 
 		rsp := protocol.WebRtcRsp{}
 
 		rspHeader := make(map[string][]string)
+
+		rspHeader["request-session"] = reqHeader["request-session"]
 
 		rsp.Code = response.StatusCode
 		for k, v := range response.Header {
@@ -149,19 +154,20 @@ func (wr *webRtc) mainLoop() {
 
 		body, err := ioutil.ReadAll(response.Body)
 		if err != nil {
-			fmt.Printf("read http rsp err :%s\n", err.Error())
-			return
+			log.Printf("read http rsp err :%s\n", err.Error())
+			continue
 		}
 		rsp.Body = string(body)
 
 		wr.dcManager.SendWebRtcReq(rsp)
 
-		fmt.Printf("session :%s mainLoop send rsp :%+v\n", wr.id, rsp)
+		log.Printf("session :%s mainLoop send rsp :%+v\n", wr.id, rsp)
 	}
+
 }
 
 func (wr *webRtc) createConn() {
-	fmt.Println("Starting up PeerConnection config...")
+	log.Println("Starting up PeerConnection config...")
 	urls := []string{"turn:iamtest.yqtc.co:3478?transport=udp"}
 	s := webrtc.IceServer{Urls: urls, Username: "1531542280:guest", Credential: "xAhVJq3B18x2tdaFQUeYc3DcK9k="} //Credential:"turn.yqtc.top"
 	webrtc.NewIceServer()
@@ -173,7 +179,7 @@ func (wr *webRtc) createConn() {
 
 	wr.pc = pc
 	if nil != err {
-		fmt.Println("Failed to create PeerConnection.")
+		log.Println("Failed to create PeerConnection.")
 		return
 	}
 	return
@@ -190,22 +196,22 @@ func (wr *webRtc) registerCallback() {
 	// Once all ICE candidates are prepared, they need to be sent to the remote
 	// peer which will attempt reaching the local peer through NATs.
 	wr.pc.OnIceComplete = func() {
-		fmt.Println("Finished gathering ICE candidates.")
+		log.Println("Finished gathering ICE candidates.")
 		sdp := wr.pc.LocalDescription().Serialize()
 		wr.chSignalRegister <- sdp
 	}
 
 	wr.pc.OnDataChannel = func(channel *webrtc.DataChannel) {
-		fmt.Println("Datachannel established by remote... ", channel.Label())
+		log.Println("Datachannel established by remote... ", channel.Label())
 	}
 }
 
 func (wr *webRtc) prepareDataChannel() {
 	// Attempting to create the first datachannel triggers ICE.
-	fmt.Println("prepareDataChannel datachannel....")
+	log.Println("prepareDataChannel datachannel....")
 	datachannl, err := wr.pc.CreateDataChannel("test")
 	if nil != err {
-		fmt.Println("Unexpected failure creating Channel.")
+		log.Println("Unexpected failure creating Channel.")
 		return
 	}
 
@@ -213,10 +219,10 @@ func (wr *webRtc) prepareDataChannel() {
 }
 
 func (wr *webRtc) generateOffer() {
-	fmt.Println("Generating offer...")
+	log.Println("Generating offer...")
 	offer, err := wr.pc.CreateOffer() // blocking
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return
 	}
 
@@ -227,24 +233,24 @@ func (wr *webRtc) setBoxLocalRemoteSdp(msg string) {
 	var parsed map[string]interface{}
 	err := json.Unmarshal([]byte(msg), &parsed)
 	if nil != err {
-		fmt.Println(err, ", try again.")
-		fmt.Println("input msg=" + msg)
+		log.Println(err, ", try again.")
+		log.Println("input msg=" + msg)
 		return
 	}
 
 	if nil != parsed["sdp"] {
 		sdp := webrtc.DeserializeSessionDescription(msg)
 		if nil == sdp {
-			fmt.Println("Invalid SDP.")
+			log.Println("Invalid SDP.")
 			return
 		}
 
 		err = wr.pc.SetRemoteDescription(sdp)
 		if nil != err {
-			fmt.Println("ERROR", err)
+			log.Println("ERROR", err)
 			return
 		}
-		fmt.Println("SDP " + sdp.Type + " successfully received.")
+		log.Println("SDP " + sdp.Type + " successfully received.")
 	}
 
 	// Allow individual ICE candidate messages, but this won't be necessary if
@@ -252,13 +258,13 @@ func (wr *webRtc) setBoxLocalRemoteSdp(msg string) {
 	if nil != parsed["candidate"] {
 		ice := webrtc.DeserializeIceCandidate(msg)
 		if nil == ice {
-			fmt.Println("Invalid ICE candidate.")
+			log.Println("Invalid ICE candidate.")
 			return
 		}
 		wr.pc.AddIceCandidate(*ice)
-		fmt.Println("ICE candidate successfully received.")
+		log.Println("ICE candidate successfully received.")
 	}
-	fmt.Println("\nNormal exit setBoxLocalRemoteSdp")
+	log.Println("\nNormal exit setBoxLocalRemoteSdp")
 }
 
 func getSdpSession(sdp string) string {
